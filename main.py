@@ -3,7 +3,11 @@ from typing import Any
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
-app = FastAPI(title="Task API", version="1.0")
+app = FastAPI(
+    title="Task API",
+    version="1.0",
+    description="A small in-memory CRUD API for managing to-do tasks.",
+)
 
 tasks = [
     {"id": 1, "title": "Learn HTTP basics", "done": True},
@@ -36,22 +40,22 @@ def clean_title(value: Any):
     return title or None
 
 
-@app.get("/", summary="Describe the API")
+@app.get("/", summary="Describe the API", tags=["system"])
 def root():
     return {"name": "Task API", "version": "1.0", "endpoints": ["/tasks"]}
 
 
-@app.get("/health", summary="Check whether the API is running")
+@app.get("/health", summary="Check whether the API is running", tags=["system"])
 def health():
     return {"status": "ok"}
 
 
-@app.get("/tasks", summary="List all tasks")
+@app.get("/tasks", summary="List all tasks", tags=["tasks"])
 def list_tasks():
     return tasks
 
 
-@app.get("/tasks/{task_id}", summary="Get one task by id")
+@app.get("/tasks/{task_id}", summary="Get one task by id", tags=["tasks"])
 def get_task(task_id: int):
     task = find_task(task_id)
     if task is None:
@@ -59,7 +63,27 @@ def get_task(task_id: int):
     return task
 
 
-@app.post("/tasks", status_code=201, summary="Create a task")
+@app.post(
+    "/tasks",
+    status_code=201,
+    summary="Create a task",
+    tags=["tasks"],
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["title"],
+                        "properties": {"title": {"type": "string"}},
+                    },
+                    "example": {"title": "Buy milk"},
+                }
+            },
+        }
+    },
+)
 async def create_task(request: Request):
     body = await read_json_body(request)
     if body is None:
@@ -75,7 +99,28 @@ async def create_task(request: Request):
     return task
 
 
-@app.put("/tasks/{task_id}", summary="Update a task")
+@app.put(
+    "/tasks/{task_id}",
+    summary="Update a task",
+    tags=["tasks"],
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string"},
+                            "done": {"type": "boolean"},
+                        },
+                    },
+                    "example": {"title": "Buy milk", "done": True},
+                }
+            },
+        }
+    },
+)
 async def update_task(task_id: int, request: Request):
     task = find_task(task_id)
     if task is None:
@@ -102,7 +147,7 @@ async def update_task(task_id: int, request: Request):
     return task
 
 
-@app.delete("/tasks/{task_id}", status_code=204, summary="Delete a task")
+@app.delete("/tasks/{task_id}", status_code=204, summary="Delete a task", tags=["tasks"])
 def delete_task(task_id: int):
     task = find_task(task_id)
     if task is None:
