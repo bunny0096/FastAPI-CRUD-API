@@ -1,6 +1,6 @@
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 app = FastAPI(title="Task API", version="1.0")
@@ -73,3 +73,40 @@ async def create_task(request: Request):
     task = {"id": next_id, "title": title, "done": False}
     tasks.append(task)
     return task
+
+
+@app.put("/tasks/{task_id}", summary="Update a task")
+async def update_task(task_id: int, request: Request):
+    task = find_task(task_id)
+    if task is None:
+        return error_response(404, f"Task {task_id} not found")
+
+    body = await read_json_body(request)
+    if body is None:
+        return error_response(400, "Request body must be a JSON object")
+
+    if "title" not in body and "done" not in body:
+        return error_response(400, "Request body must include title or done")
+
+    if "title" in body:
+        title = clean_title(body.get("title"))
+        if title is None:
+            return error_response(400, "Title is required and cannot be empty")
+        task["title"] = title
+
+    if "done" in body:
+        if not isinstance(body.get("done"), bool):
+            return error_response(400, "Done must be true or false")
+        task["done"] = body["done"]
+
+    return task
+
+
+@app.delete("/tasks/{task_id}", status_code=204, summary="Delete a task")
+def delete_task(task_id: int):
+    task = find_task(task_id)
+    if task is None:
+        return error_response(404, f"Task {task_id} not found")
+
+    tasks.remove(task)
+    return Response(status_code=204)
