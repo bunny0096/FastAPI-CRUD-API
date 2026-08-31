@@ -1,4 +1,6 @@
-from fastapi import FastAPI
+from typing import Any
+
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 app = FastAPI(title="Task API", version="1.0")
@@ -16,6 +18,22 @@ def find_task(task_id: int):
 
 def error_response(status_code: int, message: str):
     return JSONResponse(status_code=status_code, content={"error": message})
+
+
+async def read_json_body(request: Request):
+    try:
+        body = await request.json()
+    except ValueError:
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def clean_title(value: Any):
+    if not isinstance(value, str):
+        return None
+
+    title = value.strip()
+    return title or None
 
 
 @app.get("/", summary="Describe the API")
@@ -38,4 +56,20 @@ def get_task(task_id: int):
     task = find_task(task_id)
     if task is None:
         return error_response(404, f"Task {task_id} not found")
+    return task
+
+
+@app.post("/tasks", status_code=201, summary="Create a task")
+async def create_task(request: Request):
+    body = await read_json_body(request)
+    if body is None:
+        return error_response(400, "Request body must be a JSON object")
+
+    title = clean_title(body.get("title"))
+    if title is None:
+        return error_response(400, "Title is required and cannot be empty")
+
+    next_id = max((task["id"] for task in tasks), default=0) + 1
+    task = {"id": next_id, "title": title, "done": False}
+    tasks.append(task)
     return task
