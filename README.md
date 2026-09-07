@@ -28,6 +28,17 @@ curl -i http://localhost:3000/tasks/1
 curl -i http://localhost:3000/tasks/999
 ```
 
+## Stage 3: Full CRUD on Postgres
+
+The complete CRUD lifecycle runs against PostgreSQL:
+
+- **Create**: `POST /tasks` inserts new records and returns `201 Created`
+- **Read**: `GET /tasks` (200) and `GET /tasks/:id` (200 or 404)
+- **Update**: `PUT /tasks/:id` updates title and done status (200 or 404)
+- **Delete**: `DELETE /tasks/:id` deletes record and returns `204 No Content`
+- **Validation**: Missing or blank titles return `400 Bad Request` with `{"error": "Title is required and cannot be empty"}`
+
+
 
 
 ## Install
