@@ -18,6 +18,17 @@ docker ps
 docker exec -it taskdb psql -U postgres -d tasks -c "\dt"
 ```
 
+## Stage 2: Read from Postgres
+
+Queries use parameterized placeholders (`%s`) for security and separation:
+
+```bash
+curl -i http://localhost:3000/tasks
+curl -i http://localhost:3000/tasks/1
+curl -i http://localhost:3000/tasks/999
+```
+
+
 
 ## Install
 
