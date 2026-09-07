@@ -215,3 +215,51 @@ Throughout assignments A1, A2, and A3, the task API swapped storage engines thre
 3. PostgreSQL container (A3)
 
 Because all database interactions are encapsulated inside the repository module (`db.py`), route handlers in `main.py` and the external HTTP API contracts remain completely unchanged. This demonstrates that database engines are merely implementation details decoupled from API business logic.
+
+---
+
+## Stage 6: AI vs Me (Bonus Rematch)
+
+### 1. The Specification Prompt
+The prompt written from memory without referencing the assignment text:
+
+> *"Write a production-ready Python FastAPI CRUD application for managing to-do tasks backed by PostgreSQL and containerized with Docker Compose.*
+>
+> *Requirements:*
+> *1. Tech Stack: Python 3.12, FastAPI, Uvicorn, and raw PostgreSQL driver `psycopg` (v3). Do not use an ORM.*
+> *2. Database Schema: A `tasks` table with columns `id SERIAL PRIMARY KEY`, `title TEXT NOT NULL`, and `done BOOLEAN NOT NULL DEFAULT FALSE`.*
+> *3. Startup & Seeding: On application startup, connect to Postgres using `DATABASE_URL` from the environment, create the `tasks` table if it doesn't exist, and seed 3 initial sample tasks only if the table is empty (never re-seed on subsequent restarts).*
+> *4. Endpoints: Implement 5 CRUD endpoints matching REST standards:*
+> *   - `GET /tasks` (list all tasks ordered by id)*
+> *   - `GET /tasks/{id}` (return 404 if not found with JSON error `{"error": "Task not found"}`)*
+> *   - `POST /tasks` (validate title is present and non-empty, return 400 if invalid with JSON error; on success return 201 with created task)*
+> *   - `PUT /tasks/{id}` (update title/done, return 404 if not found, return updated task)*
+> *   - `DELETE /tasks/{id}` (delete task, return 404 if not found, return 204 with empty body on success)*
+> *5. Security: Use parameterized queries (`%s` placeholders) everywhere to prevent SQL injection.*
+> *6. Environment & Secrets: Read database credentials from environment variable `DATABASE_URL`. Never hardcode secrets. Provide a `.env.example`.*
+> *7. Docker & Compose: Provide a Dockerfile and a `compose.yaml` containing two services: `api` and `db` (using `postgres:16-alpine`). The compose file must mount a named volume so data persists across restarts, and the api must be reachable on port 3000."*
+
+The generated output was quarantined in `ai-version/`.
+
+### 2. Concrete Differences Found (`git diff --no-index`)
+
+1. **Startup Synchronization & Race Conditions (`compose.yaml`)**:
+   - **Hand-built**: Implemented a Postgres health check (`test: ["CMD-SHELL", "pg_isready -U postgres -d tasks"]`) and configured `depends_on: db: condition: service_healthy`. The API container waits until Postgres is completely ready to accept socket connections.
+   - **AI version**: Used bare `depends_on: - db`. In Docker Compose, this only waits for the container process to spawn. The API attempted connection immediately before the Postgres daemon finished initialization, throwing a connection refused exception on first boot.
+2. **Resilience & Retry Logic (`db.py`)**:
+   - **Hand-built**: Added an initialization retry loop (`init_db(max_retries=5, retry_delay=1.0)`) and an active DB ping function (`check_db()`).
+   - **AI version**: Attempted connection once without retries or error handling.
+3. **Error Response Schema & HTTP Status Contracts (`main.py`)**:
+   - **Hand-built**: Enforced strict `{"error": "<message>"}` payloads with HTTP `400` status codes for validation failures and custom 404 responses matching the previous A1/A2 contracts.
+   - **AI version**: Used FastAPI `HTTPException`, which defaults to `{"detail": "<message>"}` instead of `{"error": ...}`, and Pydantic validation schemas which return HTTP `422 Unprocessable Entity` instead of HTTP `400 Bad Request`.
+4. **Image Footprint (`compose.yaml`)**:
+   - **Hand-built**: Used `postgres:16-alpine` (~100 MB footprint).
+   - **AI version**: Used standard Debian-based `postgres:16` (~400 MB footprint), needlessly ballooning image size and pull times.
+
+### 3. What the AI Got Right vs Wrong
+- **What it did well**: The AI correctly captured parameterized SQL queries (`%s`), wrote a clean multi-stage `.dockerignore`, avoided hardcoding passwords, and correctly named the Docker volume for persistent storage.
+- **What it got wrong**: It failed to handle startup synchronization via healthchecks, used default Pydantic exceptions that altered API error contracts (producing `422` with `{"detail": ...}` instead of `400` with `{"error": ...}`), and lacked connection retry logic.
+- **What the prompt forgot to specify**: The prompt should have explicitly instructed: *"Do not use Pydantic models for request validation if it results in HTTP 422; return HTTP 400 with a JSON key named 'error'. Additionally, configure a healthcheck on the database service in Docker Compose."*
+
+### 4. Rematch Reflection
+*Improved prompt specification:* Added explicit constraints regarding HTTP error codes (enforcing 400 over 422), the exact error JSON key structure (`error` vs `detail`), and Compose `service_healthy` conditions. With these constraints added, the AI regenerated code that closely matched the production architecture. The key lesson: an AI's code is only as robust as the reviewer's understanding of edge cases and systems engineering.
