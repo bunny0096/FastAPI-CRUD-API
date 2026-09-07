@@ -1,111 +1,217 @@
-# Task API
+# Task API: Containerized FastAPI + PostgreSQL Stack
 
-A FastAPI CRUD API for managing to-do tasks, backed by a containerized PostgreSQL database.
+A production-grade, containerized CRUD API for managing tasks, powered by **FastAPI**, **psycopg 3**, and **PostgreSQL 16**, fully orchestrated with **Docker Compose**.
 
-## Stage 0: Run Postgres in Docker
+---
 
-Start Postgres in one command with a named volume so data persists:
+## The One Command to Run Everything
 
-```bash
-docker run --name taskdb -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=tasks \
-  -p 5432:5432 -v taskdata:/var/lib/postgresql/data -d postgres:16-alpine
-```
-
-Verify the database server is running:
+From a fresh clone, spin up both the database and the API container with a single command:
 
 ```bash
-docker ps
-docker exec -it taskdb psql -U postgres -d tasks -c "\dt"
+cp .env.example .env && docker compose up --build
 ```
 
-## Stage 2: Read from Postgres
+The API will be live at `http://localhost:3000` (and Swagger documentation at `http://localhost:3000/docs`).
 
-Queries use parameterized placeholders (`%s`) for security and separation:
+To run in the background (detached):
+```bash
+docker compose up -d
+```
+
+To stop the stack:
+```bash
+docker compose down
+```
+
+---
+
+## Architecture & Configuration
+
+The application consists of two isolated Docker services connected via an internal bridge network:
+1. **`db`**: Official `postgres:16-alpine` image with data mounted onto named volume `taskdata`. Includes a Docker healthcheck using `pg_isready`.
+2. **`api`**: Python 3.12 slim container running FastAPI via Uvicorn on port `3000`. Starts only when `db` is healthy (`condition: service_healthy`).
+
+### Environment Variables
+
+Configuration and database secrets are loaded from `.env` (which is git-ignored). See `.env.example` for reference:
 
 ```bash
-curl -i http://localhost:3000/tasks
-curl -i http://localhost:3000/tasks/1
-curl -i http://localhost:3000/tasks/999
+# .env.example
+DATABASE_URL=postgres://postgres:dev@localhost:5432/tasks
+PORT=3000
 ```
 
-## Stage 3: Full CRUD on Postgres
-
-The complete CRUD lifecycle runs against PostgreSQL:
-
-- **Create**: `POST /tasks` inserts new records and returns `201 Created`
-- **Read**: `GET /tasks` (200) and `GET /tasks/:id` (200 or 404)
-- **Update**: `PUT /tasks/:id` updates title and done status (200 or 404)
-- **Delete**: `DELETE /tasks/:id` deletes record and returns `204 No Content`
-- **Validation**: Missing or blank titles return `400 Bad Request` with `{"error": "Title is required and cannot be empty"}`
-
-
-
-
-## Install
-
+Inside Docker Compose, the connection string dynamically routes to the database service name `db`:
 ```bash
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
+DATABASE_URL=postgres://postgres:dev@db:5432/tasks
 ```
 
-## Run
+No passwords or database secrets are hardcoded in application source files or git history.
 
-```bash
-.venv/bin/python -m uvicorn main:app --reload
-```
-
-The API runs at `http://127.0.0.1:8000`.
+---
 
 ## Endpoints
 
-| Method | Path | Description | Success |
-| --- | --- | --- | --- |
-| GET | `/` | API name, version, and endpoint list | `200 OK` |
-| GET | `/health` | Server health check | `200 OK` |
-| GET | `/tasks` | List all tasks from SQLite | `200 OK` |
-| GET | `/tasks/{task_id}` | Get one task by id from SQLite | `200 OK` |
-| POST | `/tasks` | Create a task with `{"title": "Buy milk"}` | `201 Created` |
-| PUT | `/tasks/{task_id}` | Update a task title and/or done state | `200 OK` |
-| DELETE | `/tasks/{task_id}` | Delete a task | `204 No Content` |
+| Method | Path | Description | Success Status | Error Statuses |
+| :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/` | API name, version, and endpoints list | `200 OK` | - |
+| `GET` | `/health` | Live DB ping (`SELECT 1`) | `200 OK` | `503 Service Unavailable` |
+| `GET` | `/tasks` | List all tasks ordered by `id` | `200 OK` | - |
+| `GET` | `/tasks/{id}` | Retrieve a single task by ID | `200 OK` | `404 Not Found` |
+| `POST` | `/tasks` | Create a task (`{"title": "..."}`) | `201 Created` | `400 Bad Request` |
+| `PUT` | `/tasks/{id}` | Update title and/or done status | `200 OK` | `400 Bad Request`, `404 Not Found` |
+| `DELETE` | `/tasks/{id}` | Delete a task by ID | `204 No Content` | `404 Not Found` |
 
-Errors use JSON, for example `{"error": "Task 99 not found"}`. Invalid request bodies return `400 Bad Request`; unknown task ids return `404 Not Found`.
+---
 
-## Example curl output
+## Verified `curl -i` Output
 
+### 1. Health Check (`GET /health`)
 ```bash
-curl -i -X POST http://127.0.0.1:8000/tasks \
-  -H "Content-Type: application/json" \
-  -d '{"title":"Buy milk"}'
+curl -i http://localhost:3000/health
 ```
-
-```text
-HTTP/1.1 201 Created
+```http
+HTTP/1.1 200 OK
+date: Mon, 07 Sep 2026 10:06:54 GMT
+server: uvicorn
+content-length: 25
 content-type: application/json
 
-{"id":4,"title":"Buy milk","done":false}
+{"status":"ok","db":"ok"}
 ```
 
-## SQLite checks
+### 2. List Tasks (`GET /tasks`)
+```bash
+curl -i http://localhost:3000/tasks
+```
+```http
+HTTP/1.1 200 OK
+date: Mon, 07 Sep 2026 10:07:00 GMT
+server: uvicorn
+content-length: 226
+content-type: application/json
 
-Open `tasks.db` in DB Browser for SQLite to view the same rows that the API returns. One useful query from the assignment is:
-
-```sql
-SELECT * FROM tasks WHERE done = 1;
+[
+  {"id":1,"title":"Learn HTTP basics","done":true},
+  {"id":2,"title":"Build a CRUD API","done":false},
+  {"id":3,"title":"Test endpoints in Swagger UI","done":false},
+  {"id":4,"title":"Verify Docker Compose persistence","done":false}
+]
 ```
 
-That query returns only completed tasks, because SQLite stores `done` as `1` for true and `0` for false.
+### 3. Create Task (`POST /tasks`)
+```bash
+curl -i -X POST http://localhost:3000/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Deploy stack with Docker Compose"}'
+```
+```http
+HTTP/1.1 201 Created
+date: Mon, 07 Sep 2026 10:10:53 GMT
+server: uvicorn
+content-length: 64
+content-type: application/json
 
-## Swagger UI
+{"id":5,"title":"Deploy stack with Docker Compose","done":false}
+```
 
-Open `http://127.0.0.1:8000/docs` after starting the server.
+### 4. Update Task (`PUT /tasks/5`)
+```bash
+curl -i -X PUT http://localhost:3000/tasks/5 \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Deploy stack with Docker Compose", "done": true}'
+```
+```http
+HTTP/1.1 200 OK
+date: Mon, 07 Sep 2026 10:11:03 GMT
+server: uvicorn
+content-length: 63
+content-type: application/json
 
-![Swagger UI showing Task API endpoints](docs/swagger-ui.png)
+{"id":5,"title":"Deploy stack with Docker Compose","done":true}
+```
 
-## Publish to GitHub
+### 5. Delete Task (`DELETE /tasks/5`)
+```bash
+curl -i -X DELETE http://localhost:3000/tasks/5
+```
+```http
+HTTP/1.1 204 No Content
+date: Mon, 07 Sep 2026 10:11:14 GMT
+server: uvicorn
+```
 
-After creating a public GitHub repository, connect and push this local repo:
+### 6. Not Found Error Handling (`GET /tasks/999`)
+```bash
+curl -i http://localhost:3000/tasks/999
+```
+```http
+HTTP/1.1 404 Not Found
+date: Mon, 07 Sep 2026 10:11:22 GMT
+server: uvicorn
+content-length: 30
+content-type: application/json
+
+{"error":"Task 999 not found"}
+```
+
+### 7. Bad Request Validation (`POST /tasks` with empty title)
+```bash
+curl -i -X POST http://localhost:3000/tasks \
+  -H "Content-Type: application/json" \
+  -d '{"title": ""}'
+```
+```http
+HTTP/1.1 400 Bad Request
+date: Mon, 07 Sep 2026 10:11:28 GMT
+server: uvicorn
+content-length: 49
+content-type: application/json
+
+{"error":"Title is required and cannot be empty"}
+```
+
+---
+
+## Database Verification & Screenshot
+
+Inside the containerized Postgres database, verify the schema and stored records using `psql`:
 
 ```bash
-git remote add origin <your-github-repo-url>
-git push -u origin main
+docker exec -it containerizethestack-db-1 psql -U postgres -d tasks -c "\dt" -c "SELECT * FROM tasks;"
 ```
+
+![PostgreSQL Database Screenshot in Docker](docs/db-screenshot.png)
+
+---
+
+## Data Persistence Across Full Restarts
+
+All database records are stored on the Docker named volume `taskdata` (mapped to `/var/lib/postgresql/data`).
+Even when containers are completely stopped and removed via `docker compose down`, rebuilding and restarting via `docker compose up` retains all existing records:
+
+```bash
+docker compose down
+docker compose up -d
+curl http://localhost:3000/tasks
+# -> All existing tasks survive intact!
+```
+
+---
+
+## Optional Extras & Deep Dive
+
+### 1. The Mortality Experiment: Why Volumes Exist
+A container's default writable layer is ephemeral. If you launch Postgres without a volume (`-v taskdata:...`), any rows created live purely in the container layer. When that container is removed (`docker rm`), its storage is immediately deallocated and the data is lost forever. A Docker volume separates lifecycle of state from the lifecycle of compute, ensuring rows survive container upgrades, restarts, and redeployments.
+
+### 2. Production Health Check (`GET /health`)
+The `/health` endpoint executes an active `SELECT 1` ping against PostgreSQL. In production, load balancers (such as AWS ALB or Nginx) use this endpoint to gate traffic: if PostgreSQL becomes unreachable or the connection pool saturates, `/health` returns `503 Service Unavailable`, prompting the load balancer to route requests away from unhealthy instances or trigger automatic container restarts.
+
+### 3. Storage Abstraction ("Prove the Swap")
+Throughout assignments A1, A2, and A3, the task API swapped storage engines three times:
+1. In-memory list (A1)
+2. SQLite single file (A2)
+3. PostgreSQL container (A3)
+
+Because all database interactions are encapsulated inside the repository module (`db.py`), route handlers in `main.py` and the external HTTP API contracts remain completely unchanged. This demonstrates that database engines are merely implementation details decoupled from API business logic.
