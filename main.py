@@ -1,65 +1,16 @@
-import sqlite3
-from pathlib import Path
+import os
 from typing import Any
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
+import db
+
 app = FastAPI(
     title="Task API",
     version="1.0",
-    description="A small SQLite-backed CRUD API for managing to-do tasks.",
+    description="A containerized PostgreSQL-backed CRUD API for managing to-do tasks.",
 )
-
-BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "tasks.db"
-
-SEED_TASKS = [
-    {"title": "Learn HTTP basics", "done": True},
-    {"title": "Build a CRUD API", "done": False},
-    {"title": "Test endpoints in Swagger UI", "done": False},
-]
-
-
-def get_db_connection():
-    connection = sqlite3.connect(DB_PATH)
-    connection.row_factory = sqlite3.Row
-    return connection
-
-
-def row_to_task(row: sqlite3.Row | None):
-    if row is None:
-        return None
-
-    return {"id": row["id"], "title": row["title"], "done": bool(row["done"])}
-
-
-def init_db():
-    with get_db_connection() as connection:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                done INTEGER NOT NULL DEFAULT 0 CHECK (done IN (0, 1))
-            )
-            """
-        )
-        task_count = connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
-        if task_count == 0:
-            connection.executemany(
-                "INSERT INTO tasks (title, done) VALUES (?, ?)",
-                [(task["title"], int(task["done"])) for task in SEED_TASKS],
-            )
-        connection.commit()
-
-
-def find_task(task_id: int):
-    with get_db_connection() as connection:
-        row = connection.execute(
-            "SELECT id, title, done FROM tasks WHERE id = ?", (task_id,)
-        ).fetchone()
-    return row_to_task(row)
 
 
 def error_response(status_code: int, message: str):
@@ -82,7 +33,13 @@ def clean_title(value: Any):
     return title or None
 
 
-init_db()
+@app.on_event("startup")
+def on_startup():
+    db.init_db()
+
+
+# Ensure db is initialized upon module load as well
+db.init_db()
 
 
 @app.get("/", summary="Describe the API", tags=["system"])
@@ -90,23 +47,22 @@ def root():
     return {"name": "Task API", "version": "1.0", "endpoints": ["/tasks"]}
 
 
-@app.get("/health", summary="Check whether the API is running", tags=["system"])
+@app.get("/health", summary="Check whether the API and database are running", tags=["system"])
 def health():
-    return {"status": "ok"}
+    db_ok = db.check_db()
+    if db_ok:
+        return {"status": "ok", "db": "ok"}
+    return JSONResponse(status_code=503, content={"status": "degraded", "db": "error"})
 
 
 @app.get("/tasks", summary="List all tasks", tags=["tasks"])
 def list_tasks():
-    with get_db_connection() as connection:
-        rows = connection.execute(
-            "SELECT id, title, done FROM tasks ORDER BY id"
-        ).fetchall()
-    return [row_to_task(row) for row in rows]
+    return db.get_all_tasks()
 
 
 @app.get("/tasks/{task_id}", summary="Get one task by id", tags=["tasks"])
 def get_task(task_id: int):
-    task = find_task(task_id)
+    task = db.get_task(task_id)
     if task is None:
         return error_response(404, f"Task {task_id} not found")
     return task
@@ -142,14 +98,8 @@ async def create_task(request: Request):
     if title is None:
         return error_response(400, "Title is required and cannot be empty")
 
-    with get_db_connection() as connection:
-        cursor = connection.execute(
-            "INSERT INTO tasks (title, done) VALUES (?, ?)", (title, 0)
-        )
-        connection.commit()
-        task_id = cursor.lastrowid
-
-    return find_task(task_id)
+    created = db.create_task(title, done=False)
+    return created
 
 
 @app.put(
@@ -175,7 +125,7 @@ async def create_task(request: Request):
     },
 )
 async def update_task(task_id: int, request: Request):
-    task = find_task(task_id)
+    task = db.get_task(task_id)
     if task is None:
         return error_response(404, f"Task {task_id} not found")
 
@@ -199,26 +149,17 @@ async def update_task(task_id: int, request: Request):
             return error_response(400, "Done must be true or false")
         done = body["done"]
 
-    with get_db_connection() as connection:
-        connection.execute(
-            "UPDATE tasks SET title = ?, done = ? WHERE id = ?",
-            (title, int(done), task_id),
-        )
-        connection.commit()
-
-    return find_task(task_id)
+    updated = db.update_task(task_id, title=title, done=done)
+    return updated
 
 
 @app.delete(
     "/tasks/{task_id}", status_code=204, summary="Delete a task", tags=["tasks"]
 )
 def delete_task(task_id: int):
-    task = find_task(task_id)
+    task = db.get_task(task_id)
     if task is None:
         return error_response(404, f"Task {task_id} not found")
 
-    with get_db_connection() as connection:
-        connection.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
-        connection.commit()
-
+    db.delete_task(task_id)
     return Response(status_code=204)
