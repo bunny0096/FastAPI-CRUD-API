@@ -21,9 +21,20 @@ def get_db_connection():
     return psycopg.connect(DATABASE_URL, row_factory=dict_row)
 
 
-def init_db():
+def init_db(max_retries: int = 5, retry_delay: float = 1.0):
     """Create the tasks table if missing and seed initial tasks if empty."""
-    with get_db_connection() as conn:
+    import time
+    conn = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            conn = get_db_connection()
+            break
+        except Exception as e:
+            if attempt == max_retries:
+                raise e
+            time.sleep(retry_delay)
+
+    with conn:
         with conn.cursor() as cur:
             cur.execute(
                 """
@@ -45,6 +56,7 @@ def init_db():
                         (task["title"], task["done"]),
                     )
             conn.commit()
+
 
 
 def get_all_tasks() -> List[Dict[str, Any]]:
