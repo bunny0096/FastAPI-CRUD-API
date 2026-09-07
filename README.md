@@ -1,12 +1,23 @@
 # Task API
 
-A small FastAPI CRUD API for managing to-do tasks. It uses SQLite for persistent storage, so tasks survive when the server stops and starts again. Swagger UI is available at `/docs`.
+A FastAPI CRUD API for managing to-do tasks, backed by a containerized PostgreSQL database.
 
-## Why SQLite
+## Stage 0: Run Postgres in Docker
 
-SQLite was chosen because it stores the database in one local file, needs no separate database server, and works with Python's built-in `sqlite3` module. This keeps the project simple while still giving the API real persistence.
+Start Postgres in one command with a named volume so data persists:
 
-The database file is `tasks.db` in the project root. It is created automatically when the app starts, along with the `tasks` table and three seed tasks if the table is empty. `tasks.db` is git-ignored so each fresh clone starts with its own clean database.
+```bash
+docker run --name taskdb -e POSTGRES_PASSWORD=dev -e POSTGRES_DB=tasks \
+  -p 5432:5432 -v taskdata:/var/lib/postgresql/data -d postgres:16-alpine
+```
+
+Verify the database server is running:
+
+```bash
+docker ps
+docker exec -it taskdb psql -U postgres -d tasks -c "\dt"
+```
+
 
 ## Install
 
